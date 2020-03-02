@@ -1,6 +1,6 @@
-import { camelize } from '@ember/string';
-import { assert } from '@ember/debug';
-import EngineInstance from '@ember/engine/instance';
+import { assert } from "@ember/debug";
+import EngineInstance from "@ember/engine/instance";
+import { getOwner } from "@ember/application";
 
 EngineInstance.reopen({
   /**
@@ -43,68 +43,6 @@ EngineInstance.reopen({
   _dependenciesForChildEngines: null,
 
   buildChildEngineInstance(name, options = {}) {
-    // Check dependencies cached by engine name
-    let dependencies =
-      this._dependenciesForChildEngines &&
-      this._dependenciesForChildEngines[name];
-
-    // Prepare dependencies if none are cached
-    if (!dependencies) {
-      dependencies = {};
-
-      let camelizedName = camelize(name);
-
-      let engineConfiguration =
-        this.base.engines && this.base.engines[camelizedName];
-
-      if (engineConfiguration) {
-        let engineDependencies = engineConfiguration.dependencies;
-
-        if (engineDependencies) {
-          ['services'].forEach(category => {
-            if (engineDependencies[category]) {
-              dependencies[category] = {};
-              let dependencyType = this._dependencyTypeFromCategory(category);
-
-              for (let i = 0; i < engineDependencies[category].length; i++) {
-                let engineDependency = engineDependencies[category][i];
-                let dependencyName;
-                let dependencyNameInParent;
-
-                if (typeof engineDependency === 'object') {
-                  dependencyName = Object.keys(engineDependency)[0];
-                  dependencyNameInParent = engineDependency[dependencyName];
-                } else {
-                  dependencyName = dependencyNameInParent = engineDependency;
-                }
-
-                let dependencyKey = `${dependencyType}:${dependencyNameInParent}`;
-                let dependency = this.lookup(dependencyKey);
-
-                assert(
-                  `Engine parent failed to lookup '${dependencyKey}' dependency, as declared in 'engines.${camelizedName}.dependencies.${category}'.`,
-                  dependency
-                );
-
-                dependencies[category][dependencyName] = dependency;
-              }
-            }
-          });
-
-          if (engineDependencies.externalRoutes) {
-            dependencies.externalRoutes = engineDependencies.externalRoutes;
-          }
-        }
-      }
-
-      // Cache dependencies for child engines for faster instantiation in the future
-      this._dependenciesForChildEngines =
-        this._dependenciesForChildEngines || {};
-      this._dependenciesForChildEngines[name] = dependencies;
-    }
-
-    options.dependencies = dependencies;
-
     return this._super(name, options);
   },
 
@@ -117,53 +55,51 @@ EngineInstance.reopen({
     @return {String} route
   */
   _getExternalRoute(routeName) {
-    const route = this._externalRoutes[routeName];
+    return routeName;
+  },
 
-    assert(`The external route ${routeName} does not exist`, route);
+  lookup(fullName, options) {
+    const owner = getOwner(this.base);
+    if (owner) {
+      this.__registry__.validateInjections = function(injections) {
+        if (injections) {
+          for (let i = 0; i < injections.length; i++) {
+            let { specifier } = injections[i];
 
-    return route;
+            const dependency = owner.lookup(specifier, options);
+            try {
+              this.register(specifier, dependency, { instantiate: false });
+            } catch (e) {}
+          }
+        }
+        return true;
+      };
+    }
+
+    if (fullName.indexOf("service") === 0 && owner) {
+      this._clonedDependencies = this._clonedDependencies || {};
+      if (!this._clonedDependencies[fullName]) {
+        const dependency = owner.lookup(fullName, options);
+        try {
+          this.register(fullName, dependency, { instantiate: false });
+        } catch (e) {}
+        this._clonedDependencies[fullName] = true;
+      }
+    }
+
+    return this._super(fullName, options);
   },
 
   cloneParentDependencies() {
     this._super();
-
-    let requiredDependencies = this.base.dependencies;
-
-    if (requiredDependencies) {
-      Object.keys(requiredDependencies).forEach(category => {
-        let dependencyType = this._dependencyTypeFromCategory(category);
-
-        if (category === 'externalRoutes') {
-          this._externalRoutes = {};
-        }
-
-        requiredDependencies[category].forEach(dependencyName => {
-          let dependency =
-            this.dependencies[category] &&
-            this.dependencies[category][dependencyName];
-
-          assert(
-            `A dependency mapping for '${category}.${dependencyName}' must be declared on this engine's parent.`,
-            dependency
-          );
-
-          if (category === 'externalRoutes') {
-            this._externalRoutes[dependencyName] = dependency;
-          } else {
-            let key = `${dependencyType}:${dependencyName}`;
-            this.register(key, dependency, { instantiate: false });
-          }
-        });
-      });
-    }
   },
 
   _dependencyTypeFromCategory(category) {
     switch (category) {
-      case 'services':
-        return 'service';
-      case 'externalRoutes':
-        return 'externalRoute';
+      case "services":
+        return "service";
+      case "externalRoutes":
+        return "externalRoute";
     }
     assert(
       `Dependencies of category '${category}' can not be shared with engines.`,
@@ -171,11 +107,11 @@ EngineInstance.reopen({
     );
   },
 
-  // mount(view) {
-  //   assert('EngineInstance must be booted before it can be mounted', this._booted);
-  //
-  //   view.append()
-  // },
+  mount(view) {
+    assert('EngineInstance must be booted before it can be mounted', this._booted);
+  
+    view.append()
+  },
 
   /**
     This hook is called by the root-most Route (a.k.a. the ApplicationRoute)
@@ -191,5 +127,5 @@ EngineInstance.reopen({
   */
   didCreateRootView(view) {
     view.appendTo(this.rootElement);
-  },
+  }
 });
